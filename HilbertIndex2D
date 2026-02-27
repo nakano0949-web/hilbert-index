@@ -1,0 +1,219 @@
+// =========================
+// HilbertIndex2D 本体
+// =========================
+
+class HilbertIndex2D {
+  constructor(order) {
+    this.order = order;
+    this.items = [];
+  }
+
+  insert(x, y, value) {
+    const h = hilbertXY2D(this.order, x, y);
+    this.items.push({ h, x, y, value });
+    return this;
+  }
+
+  build() {
+    this.items.sort((a, b) => a.h - b.h);
+  }
+
+  range(rect) {
+    const ranges = hilbertRange(this.order, rect);
+    const results = [];
+
+    for (const [hMin, hMax] of ranges) {
+      const start = lowerBound(this.items, hMin);
+      const end = upperBound(this.items, hMax);
+
+      for (let i = start; i < end; i++) {
+        const p = this.items[i];
+        if (
+          p.x >= rect.x0 &&
+          p.x <= rect.x1 &&
+          p.y >= rect.y0 &&
+          p.y <= rect.y1
+        ) {
+          results.push(p);
+        }
+      }
+    }
+    return results;
+  }
+
+  knn(qx, qy, k) {
+    const hq = hilbertXY2D(this.order, qx, qy);
+    const pos = lowerBound(this.items, hq);
+
+    const candidates = [];
+    let left = pos - 1;
+    let right = pos;
+
+    while (candidates.length < k && (left >= 0 || right < this.items.length)) {
+      if (right < this.items.length) candidates.push(this.items[right++]);
+      if (left >= 0) candidates.push(this.items[left--]);
+    }
+
+    let radius = 1;
+    while (candidates.length < k) {
+      const rect = {
+        x0: qx - radius,
+        y0: qy - radius,
+        x1: qx + radius,
+        y1: qy + radius
+      };
+
+      const ranges = hilbertRange(this.order, rect);
+
+      for (const [hMin, hMax] of ranges) {
+        const start = lowerBound(this.items, hMin);
+        const end = upperBound(this.items, hMax);
+        for (let i = start; i < end; i++) {
+          candidates.push(this.items[i]);
+        }
+      }
+
+      radius *= 2;
+    }
+
+    candidates.sort((a, b) => {
+      const da = (a.x - qx) ** 2 + (a.y - qy) ** 2;
+      const db = (b.x - qx) ** 2 + (b.y - qy) ** 2;
+      return da - db;
+    });
+
+    return candidates.slice(0, k);
+  }
+}
+
+// =========================
+// Hilbert 補助関数
+// =========================
+
+function hilbertXY2D(order, x, y) {
+  let h = 0;
+  for (let i = order - 1; i >= 0; i--) {
+    const rx = (x >> i) & 1;
+    const ry = (y >> i) & 1;
+    h += (1 << (2 * i)) * ((3 * rx) ^ ry);
+    if (ry === 0) {
+      if (rx === 1) {
+        x = (1 << order) - 1 - x;
+        y = (1 << order) - 1 - y;
+      }
+      [x, y] = [y, x];
+    }
+  }
+  return h;
+}
+
+function lowerBound(arr, h) {
+  let l = 0, r = arr.length;
+  while (l < r) {
+    const m = (l + r) >> 1;
+    if (arr[m].h < h) l = m + 1;
+    else r = m;
+  }
+  return l;
+}
+
+function upperBound(arr, h) {
+  let l = 0, r = arr.length;
+  while (l < r) {
+    const m = (l + r) >> 1;
+    if (arr[m].h <= h) l = m + 1;
+    else r = m;
+  }
+  return l;
+}
+
+function hilbertRange(order, rect) {
+  const max = 1 << order;
+  const ranges = [];
+
+  function recurse(x0, y0, size, h0) {
+    const x1 = x0 + size - 1;
+    const y1 = y0 + size - 1;
+
+    // 完全に矩形の外 → 無視
+    if (x1 < rect.x0 || x0 > rect.x1 || y1 < rect.y0 || y0 > rect.y1) {
+      return;
+    }
+
+    // 完全に矩形の中 → このセル全体の Hilbert 区間を追加
+    if (x0 >= rect.x0 && x1 <= rect.x1 && y0 >= rect.y0 && y1 <= rect.y1) {
+      const h1 = h0 + size * size - 1;
+      ranges.push([h0, h1]);
+      return;
+    }
+
+    // まだ大きい → 4 分割して再帰
+    const half = size >> 1;
+    if (half === 0) return;
+
+    // Hilbert の順序に従って 4 分割
+    recurse(x0,        y0,        half, h0);
+    recurse(x0,        y0+half,   half, h0 + half*half);
+    recurse(x0+half,   y0+half,   half, h0 + 2*half*half);
+    recurse(x0+half,   y0,        half, h0 + 3*half*half);
+  }
+
+  recurse(0, 0, max, 0);
+  return ranges;
+}
+
+// =========================
+// 30000 点テスト
+// =========================
+
+const idx = new HilbertIndex2D(8);
+
+for (let i = 0; i < 30000; i++) {
+  idx.insert(Math.random()*256|0, Math.random()*256|0, i);
+}
+
+idx.build();
+
+console.time("range");
+const r = idx.range({ x0: 50, y0: 50, x1: 150, y1: 150 });
+console.timeEnd("range");
+console.log("range hits:", r.length);
+
+console.time("knn");
+const k = idx.knn(100, 100, 20);
+console.timeEnd("knn");
+console.log("knn results:", k.length);
+
+// =========================
+// 1. 矩形の大きさを変えるテスト
+// =========================
+
+// 小さい矩形
+console.time("range_small");
+const r_small = idx.range({ x0: 95, y0: 95, x1: 105, y1: 105 });
+console.timeEnd("range_small");
+console.log("small hits:", r_small.length);
+
+// 中くらいの矩形（あなたが最初に試したもの）
+console.time("range_mid");
+const r_mid = idx.range({ x0: 50, y0: 50, x1: 150, y1: 150 });
+console.timeEnd("range_mid");
+console.log("mid hits:", r_mid.length);
+
+// 大きい矩形（ほぼ全点ヒット）
+console.time("range_large");
+const r_large = idx.range({ x0: 0, y0: 0, x1: 255, y1: 255 });
+console.timeEnd("range_large");
+console.log("large hits:", r_large.length);
+
+console.time("knn_k1");
+const k1 = idx.knn(100, 100, 1);
+console.timeEnd("knn_k1");
+
+console.time("knn_k5");
+const k5 = idx.knn(100, 100, 5);
+console.timeEnd("knn_k5");
+
+console.time("knn_k50");
+const k50 = idx.knn(100, 100, 50);
+console.timeEnd("knn_k50");
