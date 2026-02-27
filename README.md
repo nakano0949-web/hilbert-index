@@ -117,4 +117,4 @@ Because it includes a complete Hilbert range query implementation—a feature mi
 
 ---
 
-必要なら、この英語説明をそのまま README.md の完全版に組み込んで仕上げるよ。
+
